@@ -1,10 +1,6 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-## [0.1.0] - 2026-03-19
-
-### Added
+## 0.1.0 (2026-03-19)
 
 - `Secret<T>` wrapper with automatic zeroization on drop
 - TTL-based expiry with `with_ttl` constructor
