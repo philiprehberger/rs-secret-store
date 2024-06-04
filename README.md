@@ -12,14 +12,14 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = "0.1.0"
+philiprehberger-secret-store = "0.2.0"
 ```
 
 For serde support (deserialize secrets, serialize as redacted):
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = { version = "0.1.0", features = ["serde"] }
+philiprehberger-secret-store = { version = "0.2.0", features = ["serde"] }
 ```
 
 ## Usage
@@ -32,6 +32,9 @@ use std::time::Duration;
 
 // Wrap a secret value — automatically zeroized on drop
 let api_key = Secret::new("sk-abc123".to_string());
+
+// Or use From trait
+let api_key: Secret<String> = Secret::from("sk-abc123");
 
 // Access the value through a closure
 api_key.expose(|key| {
@@ -108,6 +111,9 @@ store.remove_expired();
 | `.is_expired()` | Check if the secret has expired |
 | `.age()` | Duration since creation |
 | `.needs_rotation(max_age)` | True if age exceeds `max_age` |
+| `.clear()` | Manually zeroize value without dropping |
+| `From<String>` | Convert String into SecretString |
+| `From<&str>` | Convert &str into SecretString |
 
 ### `SecretString`
 
@@ -130,6 +136,7 @@ store.remove_expired();
 | `.keys()` | Iterate over key names |
 | `.len()` | Number of secrets |
 | `.is_empty()` | True if store is empty |
+| `.contains_key(key)` | Check if a key exists |
 
 ### `SecretError`
 

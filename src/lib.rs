@@ -79,6 +79,24 @@ impl<T: Zeroize> Secret<T> {
         }
     }
 
+    /// Manually zeroize the inner value without dropping the secret.
+    ///
+    /// After calling this, the secret still exists but its value has been
+    /// overwritten with zeroes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::Secret;
+    ///
+    /// let mut secret = Secret::new("sensitive".to_string());
+    /// secret.clear();
+    /// secret.expose(|v| assert!(v.is_empty()));
+    /// ```
+    pub fn clear(&mut self) {
+        self.inner.zeroize();
+    }
+
     /// Access the secret value through a closure.
     ///
     /// # Panics
@@ -94,6 +112,7 @@ impl<T: Zeroize> Secret<T> {
     /// let doubled = secret.expose(|val| val * 2);
     /// assert_eq!(doubled, 84);
     /// ```
+    #[must_use]
     pub fn expose<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&T) -> R,
@@ -114,6 +133,7 @@ impl<T: Zeroize> Secret<T> {
     /// let result = secret.expose_or(|v| v.clone());
     /// assert!(result.is_some());
     /// ```
+    #[must_use]
     pub fn expose_or<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&T) -> R,
@@ -128,6 +148,7 @@ impl<T: Zeroize> Secret<T> {
     /// Check whether the secret has exceeded its TTL.
     ///
     /// Returns `false` if no TTL was set.
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         match self.ttl {
             Some(ttl) => self.created_at.elapsed() > ttl,
@@ -136,11 +157,13 @@ impl<T: Zeroize> Secret<T> {
     }
 
     /// Return the duration since this secret was created.
+    #[must_use]
     pub fn age(&self) -> Duration {
         self.created_at.elapsed()
     }
 
     /// Check whether the secret is older than `max_age` and should be rotated.
+    #[must_use]
     pub fn needs_rotation(&self, max_age: Duration) -> bool {
         self.age() > max_age
     }
