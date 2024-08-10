@@ -8,23 +8,19 @@ Secure in-memory secret storage with automatic zeroization, expiry, and redacted
 
 ## Installation
 
-Add to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-philiprehberger-secret-store = "0.2.0"
+philiprehberger-secret-store = "0.2.1"
 ```
 
 For serde support (deserialize secrets, serialize as redacted):
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = { version = "0.2.0", features = ["serde"] }
+philiprehberger-secret-store = { version = "0.2.1", features = ["serde"] }
 ```
 
 ## Usage
-
-### Secret wrapper
 
 ```rust
 use philiprehberger_secret_store::Secret;
