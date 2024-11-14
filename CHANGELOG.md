@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 (2026-03-22)
+
+- Remove extra serde install snippet from Installation section
+
 ## 0.2.1 (2026-03-22)
 
 - Fix README and CI compliance
