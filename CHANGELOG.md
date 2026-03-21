@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (2026-03-20)
+
+- Add From<String>, From<Vec<u8>>, and From<&str> implementations for Secret
+- Add Secret::clear() for manual zeroization without dropping
+- Add SecretStore::contains_key() method
+- Add #[must_use] attributes on query and accessor methods
+
 ## 0.1.0 (2026-03-19)
 
 - `Secret<T>` wrapper with automatic zeroization on drop
