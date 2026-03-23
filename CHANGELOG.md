@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 (2026-03-22)
+
+- Fix README and CI compliance
+
 ## 0.2.0 (2026-03-20)
 
 - Add From<String>, From<Vec<u8>>, and From<&str> implementations for Secret
