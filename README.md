@@ -3,6 +3,7 @@
 [![CI](https://github.com/philiprehberger/rs-secret-store/actions/workflows/ci.yml/badge.svg)](https://github.com/philiprehberger/rs-secret-store/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/philiprehberger-secret-store.svg)](https://crates.io/crates/philiprehberger-secret-store)
 [![License](https://img.shields.io/github/license/philiprehberger/rs-secret-store)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/sponsor-GitHub%20Sponsors-ec6cb9)](https://github.com/sponsors/philiprehberger)
 
 Secure in-memory secret storage with automatic zeroization, expiry, and redacted display
 
