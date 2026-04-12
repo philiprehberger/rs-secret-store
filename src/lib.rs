@@ -197,6 +197,24 @@ impl<T: Zeroize + Clone> Clone for Secret<T> {
     }
 }
 
+impl From<String> for Secret<String> {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for Secret<String> {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_string())
+    }
+}
+
+impl From<Vec<u8>> for Secret<Vec<u8>> {
+    fn from(value: Vec<u8>) -> Self {
+        Self::new(value)
+    }
+}
+
 /// A secret holding a `String` value.
 ///
 /// Provides additional constructors for loading secrets from environment variables.
@@ -302,6 +320,7 @@ impl SecretStore {
     }
 
     /// Get a reference to a secret by key.
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&SecretString> {
         self.secrets.get(key)
     }
@@ -309,6 +328,7 @@ impl SecretStore {
     /// Convenience method: get a secret, expose it, and clone the string.
     ///
     /// Returns `None` if the key doesn't exist or the secret is expired.
+    #[must_use]
     pub fn expose(&self, key: &str) -> Option<String> {
         self.secrets
             .get(key)
@@ -325,17 +345,30 @@ impl SecretStore {
         self.secrets.retain(|_, secret| !secret.is_expired());
     }
 
+    /// Check if a key exists in the store.
+    #[must_use]
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.secrets.contains_key(key)
+    }
+
+    /// Remove and zeroize all secrets from the store.
+    pub fn clear(&mut self) {
+        self.secrets.clear();
+    }
+
     /// Iterate over the keys in the store.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.secrets.keys().map(|k| k.as_str())
     }
 
     /// Return the number of secrets in the store.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.secrets.len()
     }
 
     /// Check whether the store is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.secrets.is_empty()
     }
@@ -419,7 +452,7 @@ mod tests {
     fn test_expired_secret_panics_on_expose() {
         let secret = Secret::with_ttl("value".to_string(), Duration::from_millis(1));
         thread::sleep(Duration::from_millis(10));
-        secret.expose(|_| {});
+        let _ = secret.expose(|_| {});
     }
 
     #[test]
@@ -550,6 +583,46 @@ mod tests {
         let secret = SecretBytes::new(vec![1, 2, 3, 4]);
         let val = secret.expose(|v| v.clone());
         assert_eq!(val, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_from_string() {
+        let secret: Secret<String> = Secret::from("hello".to_string());
+        let val = secret.expose(|v| v.clone());
+        assert_eq!(val, "hello");
+    }
+
+    #[test]
+    fn test_from_str() {
+        let secret: Secret<String> = Secret::from("hello");
+        let val = secret.expose(|v| v.clone());
+        assert_eq!(val, "hello");
+    }
+
+    #[test]
+    fn test_from_vec_u8() {
+        let secret: SecretBytes = SecretBytes::from(vec![1, 2, 3]);
+        let val = secret.expose(|v| v.clone());
+        assert_eq!(val, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_secret_store_contains_key() {
+        let mut store = SecretStore::new();
+        store.insert("key", "value");
+        assert!(store.contains_key("key"));
+        assert!(!store.contains_key("missing"));
+    }
+
+    #[test]
+    fn test_secret_store_clear() {
+        let mut store = SecretStore::new();
+        store.insert("a", "1");
+        store.insert("b", "2");
+        assert_eq!(store.len(), 2);
+        store.clear();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
     }
 
     #[test]

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 (2026-04-11)
+
+- Add `SecretStore::clear()` method to wipe all secrets at once
+- Add missing `From<String>`, `From<&str>`, and `From<Vec<u8>>` trait implementations
+- Add missing `SecretStore::contains_key()` method
+- Add `#[must_use]` annotations on `SecretStore` query methods
+
 ## 0.2.4 (2026-03-31)
 
 - Standardize README to 3-badge format with emoji Support section
