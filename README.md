@@ -10,7 +10,7 @@ Secure in-memory secret storage with automatic zeroization, expiry, and redacted
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = "0.2.3"
+philiprehberger-secret-store = "0.3.0"
 ```
 
 ## Usage
@@ -103,6 +103,7 @@ store.remove_expired();
 | `.clear()` | Manually zeroize value without dropping |
 | `From<String>` | Convert String into SecretString |
 | `From<&str>` | Convert &str into SecretString |
+| `From<Vec<u8>>` | Convert Vec\<u8\> into SecretBytes |
 
 ### `SecretString`
 
@@ -121,6 +122,7 @@ store.remove_expired();
 | `.get(key)` | Get a reference to a `SecretString` |
 | `.expose(key)` | Get + expose + clone the string |
 | `.remove(key)` | Remove and zeroize a secret |
+| `.clear()` | Remove and zeroize all secrets |
 | `.remove_expired()` | Remove all expired secrets |
 | `.keys()` | Iterate over key names |
 | `.len()` | Number of secrets |
