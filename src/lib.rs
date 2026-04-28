@@ -145,6 +145,37 @@ impl<T: Zeroize> Secret<T> {
         }
     }
 
+    /// Access the secret value, returning [`SecretError::Expired`] if expired.
+    ///
+    /// This is the non-panicking, error-returning counterpart to
+    /// [`expose`](Secret::expose) and the typed counterpart to
+    /// [`expose_or`](Secret::expose_or). Use it when you want the expired
+    /// case to surface as a propagatable error rather than `None` or a panic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SecretError::Expired`] if the secret has exceeded its TTL.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::Secret;
+    ///
+    /// let secret = Secret::new("value".to_string());
+    /// let len = secret.try_expose(|v| v.len()).unwrap();
+    /// assert_eq!(len, 5);
+    /// ```
+    pub fn try_expose<F, R>(&self, f: F) -> Result<R, SecretError>
+    where
+        F: FnOnce(&T) -> R,
+    {
+        if self.is_expired() {
+            Err(SecretError::Expired)
+        } else {
+            Ok(f(&self.inner))
+        }
+    }
+
     /// Check whether the secret has exceeded its TTL.
     ///
     /// Returns `false` if no TTL was set.
@@ -319,6 +350,25 @@ impl SecretStore {
             .insert(key.into(), SecretString::with_ttl(value.into(), ttl));
     }
 
+    /// Insert a pre-built [`SecretString`] into the store.
+    ///
+    /// Use this when you already have a `SecretString` (for example, one
+    /// returned by [`SecretString::from_env`]) and want to track it under
+    /// a key without unwrapping and re-wrapping the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::{SecretStore, SecretString};
+    ///
+    /// let mut store = SecretStore::new();
+    /// store.insert_secret("api_key", SecretString::new("sk-abc123".to_string()));
+    /// assert_eq!(store.expose("api_key"), Some("sk-abc123".to_string()));
+    /// ```
+    pub fn insert_secret(&mut self, key: impl Into<String>, secret: SecretString) {
+        self.secrets.insert(key.into(), secret);
+    }
+
     /// Get a reference to a secret by key.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&SecretString> {
@@ -359,6 +409,28 @@ impl SecretStore {
     /// Iterate over the keys in the store.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.secrets.keys().map(|k| k.as_str())
+    }
+
+    /// Iterate over `(key, &SecretString)` pairs in the store.
+    ///
+    /// Values are borrowed — they are *not* exposed by iteration. To read
+    /// the inner string, call [`Secret::expose`] or
+    /// [`Secret::expose_or`] on the returned reference.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::SecretStore;
+    ///
+    /// let mut store = SecretStore::new();
+    /// store.insert("a", "1");
+    /// store.insert("b", "2");
+    ///
+    /// let count = store.iter().filter(|(_, s)| !s.is_expired()).count();
+    /// assert_eq!(count, 2);
+    /// ```
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &SecretString)> {
+        self.secrets.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     /// Return the number of secrets in the store.
@@ -623,6 +695,45 @@ mod tests {
         store.clear();
         assert!(store.is_empty());
         assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_try_expose_returns_ok_when_valid() {
+        let secret = Secret::new("value".to_string());
+        let result = secret.try_expose(|v| v.len());
+        assert_eq!(result.unwrap(), 5);
+    }
+
+    #[test]
+    fn test_try_expose_returns_expired_when_expired() {
+        let secret = Secret::with_ttl("value".to_string(), Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(10));
+        let result = secret.try_expose(|v| v.clone());
+        match result {
+            Err(SecretError::Expired) => {}
+            other => panic!("expected SecretError::Expired, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_secret_store_insert_secret() {
+        let mut store = SecretStore::new();
+        let pre_built = SecretString::new("sk-pre-built".to_string());
+        store.insert_secret("token", pre_built);
+        assert_eq!(store.expose("token"), Some("sk-pre-built".to_string()));
+    }
+
+    #[test]
+    fn test_secret_store_iter_pairs() {
+        let mut store = SecretStore::new();
+        store.insert("a", "1");
+        store.insert("b", "2");
+        let mut pairs: Vec<(&str, String)> = store
+            .iter()
+            .map(|(k, s)| (k, s.expose(|v| v.clone())))
+            .collect();
+        pairs.sort();
+        assert_eq!(pairs, vec![("a", "1".to_string()), ("b", "2".to_string())]);
     }
 
     #[test]

@@ -10,7 +10,7 @@ Secure in-memory secret storage with automatic zeroization, expiry, and redacted
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = "0.3.0"
+philiprehberger-secret-store = "0.4.0"
 ```
 
 ## Usage
@@ -97,6 +97,7 @@ store.remove_expired();
 | `Secret::with_ttl(value, ttl)` | Wrap with a time-to-live |
 | `.expose(f)` | Access value via closure (panics if expired) |
 | `.expose_or(f)` | Access value via closure (returns `None` if expired) |
+| `.try_expose(f)` | Access value via closure (returns `Err(Expired)` if expired) |
 | `.is_expired()` | Check if the secret has expired |
 | `.age()` | Duration since creation |
 | `.needs_rotation(max_age)` | True if age exceeds `max_age` |
@@ -119,12 +120,14 @@ store.remove_expired();
 | `SecretStore::new()` | Create an empty store |
 | `.insert(key, value)` | Add a secret |
 | `.insert_with_ttl(key, value, ttl)` | Add a secret with TTL |
+| `.insert_secret(key, secret)` | Insert a pre-built `SecretString` |
 | `.get(key)` | Get a reference to a `SecretString` |
 | `.expose(key)` | Get + expose + clone the string |
 | `.remove(key)` | Remove and zeroize a secret |
 | `.clear()` | Remove and zeroize all secrets |
 | `.remove_expired()` | Remove all expired secrets |
 | `.keys()` | Iterate over key names |
+| `.iter()` | Iterate over `(key, &SecretString)` pairs |
 | `.len()` | Number of secrets |
 | `.is_empty()` | True if store is empty |
 | `.contains_key(key)` | Check if a key exists |

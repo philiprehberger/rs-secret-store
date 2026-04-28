@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 (2026-04-27)
+
+- Add `Secret::try_expose()` returning `Result<R, SecretError>` for non-panicking, error-propagating access
+- Add `SecretStore::insert_secret()` to insert a pre-built `SecretString` under a key
+- Add `SecretStore::iter()` yielding `(&str, &SecretString)` pairs without exposing values
+
 ## 0.3.0 (2026-04-11)
 
 - Add `SecretStore::clear()` method to wipe all secrets at once
