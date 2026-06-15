@@ -193,6 +193,30 @@ impl<T: Zeroize> Secret<T> {
         self.created_at.elapsed()
     }
 
+    /// Return the remaining time until the secret expires.
+    ///
+    /// Returns `None` if no TTL is set, `Some(Duration::ZERO)` if the
+    /// secret has already expired, or `Some(remaining)` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::Secret;
+    /// use std::time::Duration;
+    ///
+    /// let secret = Secret::with_ttl("token".to_string(), Duration::from_secs(3600));
+    /// let remaining = secret.remaining_ttl().unwrap();
+    /// assert!(remaining <= Duration::from_secs(3600));
+    ///
+    /// let no_ttl = Secret::new("forever".to_string());
+    /// assert!(no_ttl.remaining_ttl().is_none());
+    /// ```
+    #[must_use]
+    pub fn remaining_ttl(&self) -> Option<Duration> {
+        let ttl = self.ttl?;
+        Some(ttl.checked_sub(self.created_at.elapsed()).unwrap_or(Duration::ZERO))
+    }
+
     /// Check whether the secret is older than `max_age` and should be rotated.
     #[must_use]
     pub fn needs_rotation(&self, max_age: Duration) -> bool {
@@ -541,6 +565,27 @@ mod tests {
         assert!(!secret.is_expired() || secret.is_expired()); // may or may not be expired yet
         thread::sleep(Duration::from_millis(10));
         assert!(secret.is_expired());
+    }
+
+    #[test]
+    fn test_remaining_ttl_none_when_no_ttl() {
+        let secret = Secret::new("value".to_string());
+        assert!(secret.remaining_ttl().is_none());
+    }
+
+    #[test]
+    fn test_remaining_ttl_some_when_active() {
+        let secret = Secret::with_ttl("value".to_string(), Duration::from_secs(3600));
+        let remaining = secret.remaining_ttl().expect("should have remaining ttl");
+        assert!(remaining > Duration::from_secs(3500));
+        assert!(remaining <= Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_remaining_ttl_zero_when_expired() {
+        let secret = Secret::with_ttl("value".to_string(), Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(10));
+        assert_eq!(secret.remaining_ttl(), Some(Duration::ZERO));
     }
 
     #[test]

@@ -4,13 +4,15 @@
 [![Crates.io](https://img.shields.io/crates/v/philiprehberger-secret-store.svg)](https://crates.io/crates/philiprehberger-secret-store)
 [![Last updated](https://img.shields.io/github/last-commit/philiprehberger/rs-secret-store)](https://github.com/philiprehberger/rs-secret-store/commits/main)
 
+![rs-secret-store](https://raw.githubusercontent.com/philiprehberger/rs-secret-store/main/package-card.webp)
+
 Secure in-memory secret storage with automatic zeroization, expiry, and redacted display
 
 ## Installation
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = "0.4.0"
+philiprehberger-secret-store = "0.5.0"
 ```
 
 ## Usage
@@ -100,6 +102,7 @@ store.remove_expired();
 | `.try_expose(f)` | Access value via closure (returns `Err(Expired)` if expired) |
 | `.is_expired()` | Check if the secret has expired |
 | `.age()` | Duration since creation |
+| `.remaining_ttl()` | `Option<Duration>` until expiry (`None` if no TTL, `Some(ZERO)` if expired) |
 | `.needs_rotation(max_age)` | True if age exceeds `max_age` |
 | `.clear()` | Manually zeroize value without dropping |
 | `From<String>` | Convert String into SecretString |

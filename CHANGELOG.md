@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 (2026-06-14)
+
+- Add `Secret::remaining_ttl()` returning `Option<Duration>` for time-to-expiry inspection (returns `None` when no TTL, `Some(Duration::ZERO)` when expired)
+
 ## 0.4.0 (2026-04-27)
 
 - Add `Secret::try_expose()` returning `Result<R, SecretError>` for non-panicking, error-propagating access
