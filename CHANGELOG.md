@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (2026-07-15)
+
+- Add `SecretString::constant_time_eq()` and `SecretBytes::constant_time_eq()` for verifying a candidate token or key against a stored secret without leaking information through early-exit timing (returns `false` if the secret has expired)
+- `SecretStore::remove_expired()` now returns the number of secrets removed, for logging and metrics when sweeping expired credentials
+- CI: run tests and clippy with the `serde` feature enabled
+
 ## 0.5.0 (2026-06-14)
 
 - Add `Secret::remaining_ttl()` returning `Option<Duration>` for time-to-expiry inspection (returns `None` when no TTL, `Some(Duration::ZERO)` when expired)

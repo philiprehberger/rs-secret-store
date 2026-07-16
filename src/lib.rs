@@ -305,10 +305,75 @@ impl SecretString {
     pub fn from_env_required(key: &str) -> Result<SecretString, SecretError> {
         Self::from_env(key).ok_or_else(|| SecretError::EnvVarNotFound(key.to_string()))
     }
+
+    /// Compare the secret against a candidate string in constant time.
+    ///
+    /// Use this to verify a user-supplied token or API key against a stored
+    /// secret without leaking information through early-exit timing. The
+    /// comparison runs in time proportional to the candidate length and never
+    /// short-circuits on the first differing byte. Lengths are compared first,
+    /// so a length mismatch is not itself timing-hidden.
+    ///
+    /// Returns `false` if the secret has expired.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::SecretString;
+    ///
+    /// let secret = SecretString::new("s3cr3t-token".to_string());
+    /// assert!(secret.constant_time_eq("s3cr3t-token"));
+    /// assert!(!secret.constant_time_eq("wrong-token"));
+    /// ```
+    #[must_use]
+    pub fn constant_time_eq(&self, candidate: &str) -> bool {
+        !self.is_expired() && constant_time_eq(self.inner.as_bytes(), candidate.as_bytes())
+    }
 }
 
 /// A secret holding a `Vec<u8>` value for binary secrets.
 pub type SecretBytes = Secret<Vec<u8>>;
+
+impl SecretBytes {
+    /// Compare the secret against candidate bytes in constant time.
+    ///
+    /// Behaves like [`SecretString::constant_time_eq`] but over raw bytes —
+    /// useful for verifying binary tokens, HMAC digests, or derived keys
+    /// without introducing a timing side channel.
+    ///
+    /// Returns `false` if the secret has expired.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::SecretBytes;
+    ///
+    /// let secret = SecretBytes::new(vec![1, 2, 3, 4]);
+    /// assert!(secret.constant_time_eq(&[1, 2, 3, 4]));
+    /// assert!(!secret.constant_time_eq(&[1, 2, 3, 5]));
+    /// ```
+    #[must_use]
+    pub fn constant_time_eq(&self, candidate: &[u8]) -> bool {
+        !self.is_expired() && constant_time_eq(&self.inner, candidate)
+    }
+}
+
+/// Compare two byte slices in constant time relative to their length.
+///
+/// Returns `true` only if both slices have the same length and identical
+/// contents. The loop accumulates differences without short-circuiting, so
+/// the running time does not depend on the position of the first mismatch.
+/// A length difference returns `false` immediately and is not timing-hidden.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
 
 /// Errors that can occur when working with secrets.
 #[derive(Debug)]
@@ -415,8 +480,13 @@ impl SecretStore {
     }
 
     /// Remove all expired secrets from the store.
-    pub fn remove_expired(&mut self) {
+    ///
+    /// Returns the number of secrets that were removed, which is useful for
+    /// logging or metrics when sweeping expired credentials on a schedule.
+    pub fn remove_expired(&mut self) -> usize {
+        let before = self.secrets.len();
         self.secrets.retain(|_, secret| !secret.is_expired());
+        before - self.secrets.len()
     }
 
     /// Check if a key exists in the store.
@@ -779,6 +849,50 @@ mod tests {
             .collect();
         pairs.sort();
         assert_eq!(pairs, vec![("a", "1".to_string()), ("b", "2".to_string())]);
+    }
+
+    #[test]
+    fn test_constant_time_eq_string_matches() {
+        let secret = SecretString::new("s3cr3t-token".to_string());
+        assert!(secret.constant_time_eq("s3cr3t-token"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_string_rejects_wrong_value() {
+        let secret = SecretString::new("s3cr3t-token".to_string());
+        assert!(!secret.constant_time_eq("wrong-token"));
+        // Length mismatch also rejected.
+        assert!(!secret.constant_time_eq("s3cr3t"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_string_expired_is_false() {
+        let secret = SecretString::with_ttl("value".to_string(), Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(10));
+        assert!(!secret.constant_time_eq("value"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_bytes() {
+        let secret = SecretBytes::new(vec![1, 2, 3, 4]);
+        assert!(secret.constant_time_eq(&[1, 2, 3, 4]));
+        assert!(!secret.constant_time_eq(&[1, 2, 3, 5]));
+        assert!(!secret.constant_time_eq(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn test_remove_expired_returns_count() {
+        let mut store = SecretStore::new();
+        store.insert("permanent", "stays");
+        store.insert_with_ttl("temp1", "goes", Duration::from_millis(1));
+        store.insert_with_ttl("temp2", "goes", Duration::from_millis(1));
+
+        thread::sleep(Duration::from_millis(10));
+        let removed = store.remove_expired();
+        assert_eq!(removed, 2);
+        assert_eq!(store.len(), 1);
+        // Sweeping again removes nothing.
+        assert_eq!(store.remove_expired(), 0);
     }
 
     #[test]

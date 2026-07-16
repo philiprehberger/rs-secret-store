@@ -12,7 +12,7 @@ Secure in-memory secret storage with automatic zeroization, expiry, and redacted
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = "0.5.0"
+philiprehberger-secret-store = "0.6.0"
 ```
 
 ## Usage
@@ -65,6 +65,25 @@ if let Some(secret) = SecretString::from_env("API_KEY") {
 let secret = SecretString::from_env_required("DATABASE_URL").expect("DATABASE_URL must be set");
 ```
 
+### Constant-time comparison
+
+Verify a user-supplied token or key against a stored secret without leaking
+information through early-exit timing:
+
+```rust
+use philiprehberger_secret_store::{SecretString, SecretBytes};
+
+let api_key = SecretString::new("sk-abc123".to_string());
+let user_supplied = "sk-abc123";
+if api_key.constant_time_eq(user_supplied) {
+    // authenticated
+}
+
+// Also available for binary secrets (HMAC digests, derived keys, etc.)
+let mac = SecretBytes::new(vec![0x1a, 0x2b, 0x3c]);
+assert!(mac.constant_time_eq(&[0x1a, 0x2b, 0x3c]));
+```
+
 ### SecretStore
 
 ```rust
@@ -115,6 +134,13 @@ store.remove_expired();
 |---|---|
 | `SecretString::from_env(key)` | Load from env var, remove var |
 | `SecretString::from_env_required(key)` | Load from env var or return error |
+| `.constant_time_eq(candidate)` | Compare against a `&str` in constant time (`false` if expired) |
+
+### `SecretBytes`
+
+| Method | Description |
+|---|---|
+| `.constant_time_eq(candidate)` | Compare against `&[u8]` in constant time (`false` if expired) |
 
 ### `SecretStore`
 
@@ -128,7 +154,7 @@ store.remove_expired();
 | `.expose(key)` | Get + expose + clone the string |
 | `.remove(key)` | Remove and zeroize a secret |
 | `.clear()` | Remove and zeroize all secrets |
-| `.remove_expired()` | Remove all expired secrets |
+| `.remove_expired()` | Remove all expired secrets, returning the count removed |
 | `.keys()` | Iterate over key names |
 | `.iter()` | Iterate over `(key, &SecretString)` pairs |
 | `.len()` | Number of secrets |
