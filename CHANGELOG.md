@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 (2026-10-30)
+
+- Add `SecretString::from_file()` to load a secret from a mounted file (Docker/Kubernetes secrets), trimming one trailing `\n` or `\r\n` and zeroizing the intermediate read buffer
+- Add `SecretStore::rotate()` to replace an existing secret in place, zeroizing the old value and keeping its TTL duration (restarted from now); returns `false` if the key is absent
+- Add `SecretStore::expiring_within()` returning the sorted keys whose remaining TTL is within a window (already-expired secrets included)
+- Add `SecretError::Io(String)` variant, returned by `from_file()` for read failures and non-UTF-8 contents; the message never contains secret contents
+- **Breaking:** adding a variant breaks exhaustive `match` on `SecretError`; the enum is now `#[non_exhaustive]` so future variants are not breaking — add a wildcard arm to existing matches
+
 ## 0.6.0 (2026-07-15)
 
 - Add `SecretString::constant_time_eq()` and `SecretBytes::constant_time_eq()` for verifying a candidate token or key against a stored secret without leaking information through early-exit timing (returns `false` if the secret has expired)

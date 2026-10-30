@@ -25,8 +25,10 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Read;
+use std::path::Path;
 use std::time::{Duration, Instant};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// A wrapper that holds a sensitive value with automatic zeroization on drop.
 ///
@@ -306,6 +308,63 @@ impl SecretString {
         Self::from_env(key).ok_or_else(|| SecretError::EnvVarNotFound(key.to_string()))
     }
 
+    /// Load a secret from a file, such as a Docker or Kubernetes mounted secret.
+    ///
+    /// The whole file is read and a single trailing line ending (`\n` or
+    /// `\r\n`) is trimmed, since secret files are commonly written with one.
+    /// Any other whitespace is preserved. The intermediate read buffer is
+    /// zeroized before this function returns, on both success and failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SecretError::Io`] if the file cannot be opened or read, or if
+    /// its contents are not valid UTF-8. The error message describes only the
+    /// failure — it never includes any of the file's contents.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::SecretString;
+    ///
+    /// let path = std::env::temp_dir().join(format!("doc-secret-{}", std::process::id()));
+    /// std::fs::write(&path, "db-password\n").unwrap();
+    ///
+    /// let secret = SecretString::from_file(&path).unwrap();
+    /// assert!(secret.constant_time_eq("db-password"));
+    /// # std::fs::remove_file(&path).unwrap();
+    /// ```
+    pub fn from_file(path: impl AsRef<Path>) -> Result<SecretString, SecretError> {
+        let io_err = |e: std::io::Error| SecretError::Io(e.to_string());
+
+        let mut file = std::fs::File::open(path.as_ref()).map_err(io_err)?;
+        // Pre-size the buffer from the file length so the read does not
+        // reallocate and leave unzeroized copies of the contents behind.
+        let capacity = file
+            .metadata()
+            .map(|m| usize::try_from(m.len()).unwrap_or(0))
+            .unwrap_or(0);
+        let mut buffer = Zeroizing::new(Vec::with_capacity(capacity.saturating_add(1)));
+        file.read_to_end(&mut buffer).map_err(io_err)?;
+
+        if buffer.last() == Some(&b'\n') {
+            buffer.pop();
+            if buffer.last() == Some(&b'\r') {
+                buffer.pop();
+            }
+        }
+
+        match String::from_utf8(std::mem::take(&mut *buffer)) {
+            Ok(value) => Ok(SecretString::new(value)),
+            Err(err) => {
+                let mut bytes = err.into_bytes();
+                bytes.zeroize();
+                Err(SecretError::Io(
+                    "secret file contents are not valid UTF-8".to_string(),
+                ))
+            }
+        }
+    }
+
     /// Compare the secret against a candidate string in constant time.
     ///
     /// Use this to verify a user-supplied token or API key against a stored
@@ -376,12 +435,22 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Errors that can occur when working with secrets.
+///
+/// This enum is `#[non_exhaustive]`: new variants may be added in future
+/// releases, so `match` expressions outside this crate need a wildcard arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SecretError {
     /// The secret has expired past its TTL.
     Expired,
     /// The requested environment variable was not found.
     EnvVarNotFound(String),
+    /// Reading a secret from a file failed.
+    ///
+    /// Returned by [`SecretString::from_file`] when the file cannot be opened
+    /// or read, or when its contents are not valid UTF-8. The message
+    /// describes the failure only and never contains secret contents.
+    Io(String),
 }
 
 impl fmt::Display for SecretError {
@@ -391,6 +460,7 @@ impl fmt::Display for SecretError {
             SecretError::EnvVarNotFound(key) => {
                 write!(f, "environment variable not found: {key}")
             }
+            SecretError::Io(message) => write!(f, "failed to read secret file: {message}"),
         }
     }
 }
@@ -472,6 +542,73 @@ impl SecretStore {
         self.secrets
             .get(key)
             .and_then(|s| s.expose_or(|v| v.clone()))
+    }
+
+    /// Replace the value of an existing secret in place.
+    ///
+    /// The old value is zeroized as it is replaced. If the old secret had a
+    /// TTL, the new secret gets the same TTL duration, restarted from now;
+    /// a secret without a TTL stays without one. Returns `false` (and leaves
+    /// the store unchanged) if `key` is not present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::SecretStore;
+    /// use std::time::Duration;
+    ///
+    /// let mut store = SecretStore::new();
+    /// store.insert_with_ttl("token", "tok-old", Duration::from_secs(3600));
+    ///
+    /// assert!(store.rotate("token", "tok-new"));
+    /// assert_eq!(store.expose("token"), Some("tok-new".to_string()));
+    /// assert!(!store.rotate("missing", "value"));
+    /// ```
+    pub fn rotate(&mut self, key: &str, value: impl Into<String>) -> bool {
+        match self.secrets.get_mut(key) {
+            Some(existing) => {
+                let value = value.into();
+                // Assigning drops the old secret, which zeroizes its value.
+                *existing = match existing.ttl {
+                    Some(ttl) => SecretString::with_ttl(value, ttl),
+                    None => SecretString::new(value),
+                };
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Return the keys of secrets that expire within `window`, sorted.
+    ///
+    /// A secret is included when its remaining TTL is less than or equal to
+    /// `window`, so secrets that have already expired are included as well.
+    /// Secrets without a TTL never appear. Useful for refreshing credentials
+    /// shortly before they lapse.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use philiprehberger_secret_store::SecretStore;
+    /// use std::time::Duration;
+    ///
+    /// let mut store = SecretStore::new();
+    /// store.insert("permanent", "value");
+    /// store.insert_with_ttl("short", "value", Duration::from_secs(30));
+    /// store.insert_with_ttl("long", "value", Duration::from_secs(3600));
+    ///
+    /// assert_eq!(store.expiring_within(Duration::from_secs(60)), vec!["short"]);
+    /// ```
+    #[must_use]
+    pub fn expiring_within(&self, window: Duration) -> Vec<&str> {
+        let mut keys: Vec<&str> = self
+            .secrets
+            .iter()
+            .filter(|(_, secret)| matches!(secret.remaining_ttl(), Some(r) if r <= window))
+            .map(|(key, _)| key.as_str())
+            .collect();
+        keys.sort_unstable();
+        keys
     }
 
     /// Remove a secret from the store. The value is zeroized on drop.
@@ -902,6 +1039,153 @@ mod tests {
 
         let err = SecretError::EnvVarNotFound("MY_VAR".to_string());
         assert_eq!(format!("{err}"), "environment variable not found: MY_VAR");
+
+        let err = SecretError::Io("permission denied".to_string());
+        assert_eq!(
+            format!("{err}"),
+            "failed to read secret file: permission denied"
+        );
+    }
+
+    /// Write `contents` to a uniquely named file in the system temp directory.
+    fn temp_secret_file(name: &str, contents: &[u8]) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!(
+            "philiprehberger-secret-store-{}-{}-{}",
+            std::process::id(),
+            name,
+            nanos
+        ));
+        std::fs::write(&path, contents).expect("write temp secret file");
+        path
+    }
+
+    #[test]
+    fn test_from_file_trims_single_trailing_newline() {
+        let path = temp_secret_file("lf", b"s3cr3t\n\n");
+        let secret = SecretString::from_file(&path).expect("read secret file");
+        std::fs::remove_file(&path).unwrap();
+        // Only one trailing newline is trimmed.
+        assert_eq!(secret.expose(|v| v.clone()), "s3cr3t\n");
+    }
+
+    #[test]
+    fn test_from_file_trims_crlf() {
+        let path = temp_secret_file("crlf", b"s3cr3t\r\n");
+        let secret = SecretString::from_file(&path).expect("read secret file");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(secret.expose(|v| v.clone()), "s3cr3t");
+    }
+
+    #[test]
+    fn test_from_file_preserves_contents_without_newline() {
+        let path = temp_secret_file("plain", b"  spaced secret\r");
+        let secret = SecretString::from_file(&path).expect("read secret file");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(secret.expose(|v| v.clone()), "  spaced secret\r");
+    }
+
+    #[test]
+    fn test_from_file_empty_file() {
+        let path = temp_secret_file("empty", b"");
+        let secret = SecretString::from_file(&path).expect("read secret file");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(secret.expose(|v| v.clone()), "");
+    }
+
+    #[test]
+    fn test_from_file_missing_returns_io_error() {
+        let path = std::env::temp_dir().join(format!(
+            "philiprehberger-secret-store-missing-{}",
+            std::process::id()
+        ));
+        match SecretString::from_file(&path) {
+            Err(SecretError::Io(message)) => assert!(!message.is_empty()),
+            other => panic!("expected SecretError::Io, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_file_invalid_utf8_returns_io_error_without_contents() {
+        let path = temp_secret_file("utf8", b"abc\xff\xfesecret");
+        let result = SecretString::from_file(&path);
+        std::fs::remove_file(&path).unwrap();
+        match result {
+            Err(err @ SecretError::Io(_)) => {
+                let display = format!("{err}");
+                let debug = format!("{err:?}");
+                assert!(display.contains("not valid UTF-8"));
+                assert!(!display.contains("abc"));
+                assert!(!debug.contains("abc"));
+            }
+            other => panic!("expected SecretError::Io, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_rotate_replaces_value_and_keeps_ttl() {
+        let mut store = SecretStore::new();
+        store.insert_with_ttl("token", "old", Duration::from_secs(3600));
+        thread::sleep(Duration::from_millis(10));
+
+        assert!(store.rotate("token", "new"));
+        assert_eq!(store.expose("token"), Some("new".to_string()));
+
+        let secret = store.get("token").unwrap();
+        let remaining = secret.remaining_ttl().expect("ttl preserved");
+        assert!(remaining > Duration::from_secs(3590));
+        // TTL restarted from now, so the secret is younger than the sleep.
+        assert!(secret.age() < Duration::from_millis(10));
+    }
+
+    #[test]
+    fn test_rotate_without_ttl_stays_without_ttl() {
+        let mut store = SecretStore::new();
+        store.insert("key", "old");
+        assert!(store.rotate("key", "new".to_string()));
+        assert_eq!(store.expose("key"), Some("new".to_string()));
+        assert!(store.get("key").unwrap().remaining_ttl().is_none());
+    }
+
+    #[test]
+    fn test_rotate_revives_expired_secret() {
+        let mut store = SecretStore::new();
+        store.insert_with_ttl("token", "old", Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(60));
+        assert_eq!(store.expose("token"), None);
+
+        assert!(store.rotate("token", "new"));
+        assert_eq!(store.expose("token"), Some("new".to_string()));
+    }
+
+    #[test]
+    fn test_rotate_missing_key_returns_false() {
+        let mut store = SecretStore::new();
+        assert!(!store.rotate("missing", "value"));
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn test_expiring_within_sorted_and_includes_expired() {
+        let mut store = SecretStore::new();
+        store.insert("permanent", "v");
+        store.insert_with_ttl("zeta", "v", Duration::from_secs(30));
+        store.insert_with_ttl("alpha", "v", Duration::from_secs(20));
+        store.insert_with_ttl("gone", "v", Duration::from_millis(1));
+        store.insert_with_ttl("later", "v", Duration::from_secs(3600));
+        thread::sleep(Duration::from_millis(10));
+
+        assert_eq!(
+            store.expiring_within(Duration::from_secs(60)),
+            vec!["alpha", "gone", "zeta"]
+        );
+        assert_eq!(store.expiring_within(Duration::ZERO), vec!["gone"]);
+        assert!(SecretStore::new()
+            .expiring_within(Duration::from_secs(60))
+            .is_empty());
     }
 }
 

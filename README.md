@@ -12,7 +12,7 @@ Secure in-memory secret storage with automatic zeroization, expiry, and redacted
 
 ```toml
 [dependencies]
-philiprehberger-secret-store = "0.6.0"
+philiprehberger-secret-store = "0.7.0"
 ```
 
 ## Usage
@@ -65,6 +65,24 @@ if let Some(secret) = SecretString::from_env("API_KEY") {
 let secret = SecretString::from_env_required("DATABASE_URL").expect("DATABASE_URL must be set");
 ```
 
+### SecretString from a file
+
+Load a secret from a mounted file (Docker or Kubernetes secrets). A single
+trailing `\n` or `\r\n` is trimmed, the intermediate read buffer is zeroized,
+and errors never include the file's contents:
+
+```rust
+use philiprehberger_secret_store::{SecretError, SecretString};
+
+match SecretString::from_file("/run/secrets/db_password") {
+    Ok(secret) => secret.expose(|password| {
+        // use password
+    }),
+    Err(SecretError::Io(message)) => eprintln!("could not load secret: {message}"),
+    Err(other) => eprintln!("unexpected error: {other}"),
+}
+```
+
 ### Constant-time comparison
 
 Verify a user-supplied token or key against a stored secret without leaking
@@ -108,6 +126,25 @@ println!("{:?}", store); // SecretStore { api_key: ****, session_token: **** }
 store.remove_expired();
 ```
 
+### Rotation and expiry windows
+
+```rust
+use philiprehberger_secret_store::SecretStore;
+use std::time::Duration;
+
+let mut store = SecretStore::new();
+store.insert_with_ttl("session_token", "tok-old", Duration::from_secs(3600));
+
+// Find secrets that lapse within the next five minutes (already-expired included)
+for key in store.expiring_within(Duration::from_secs(300)) {
+    println!("refresh needed: {key}");
+}
+
+// Replace a value in place: the old value is zeroized and the TTL restarts from now
+assert!(store.rotate("session_token", "tok-new"));
+assert!(!store.rotate("missing", "value"));
+```
+
 ## API
 
 ### `Secret<T>`
@@ -134,6 +171,7 @@ store.remove_expired();
 |---|---|
 | `SecretString::from_env(key)` | Load from env var, remove var |
 | `SecretString::from_env_required(key)` | Load from env var or return error |
+| `SecretString::from_file(path)` | Load from a file, trimming one trailing newline; `Err(Io)` on read failure or non-UTF-8 contents |
 | `.constant_time_eq(candidate)` | Compare against a `&str` in constant time (`false` if expired) |
 
 ### `SecretBytes`
@@ -152,6 +190,8 @@ store.remove_expired();
 | `.insert_secret(key, secret)` | Insert a pre-built `SecretString` |
 | `.get(key)` | Get a reference to a `SecretString` |
 | `.expose(key)` | Get + expose + clone the string |
+| `.rotate(key, value)` | Replace a secret in place, zeroizing the old value and restarting its TTL; `false` if absent |
+| `.expiring_within(window)` | Sorted keys whose remaining TTL is `<= window` (expired included) |
 | `.remove(key)` | Remove and zeroize a secret |
 | `.clear()` | Remove and zeroize all secrets |
 | `.remove_expired()` | Remove all expired secrets, returning the count removed |
@@ -167,6 +207,9 @@ store.remove_expired();
 |---|---|
 | `Expired` | Secret has expired |
 | `EnvVarNotFound(String)` | Environment variable not found |
+| `Io(String)` | Reading a secret file failed or its contents are not valid UTF-8 (message never contains secret contents) |
+
+`SecretError` is `#[non_exhaustive]`, so `match` expressions need a wildcard arm.
 
 ## Development
 
